@@ -188,7 +188,8 @@ def analyze_stock(
         price = quote[0].get("price", 0)
 
         # C Component: Current Quarterly Earnings
-        quarterly_income = client.get_income_statement(symbol, period="quarter", limit=8)
+        # FMP free tier caps quarterly statements at limit=5
+        quarterly_income = client.get_income_statement(symbol, period="quarter", limit=5)
         c_result = (
             calculate_quarterly_growth(quarterly_income)
             if quarterly_income
