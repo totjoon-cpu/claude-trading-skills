@@ -8,11 +8,13 @@ server rejects them; and the keys are typed into this terminal with hidden
 input instead of being pasted anywhere else.
 
 Run it with uv, which also supplies Python:
-    uv run kis_setup.py
+    uv run kis_setup.py            # install
+    uv run kis_setup.py --check    # diagnose without changing anything (no keys shown)
 """
 
 from __future__ import annotations
 
+import argparse
 import getpass
 import io
 import json
@@ -187,7 +189,85 @@ def _ask(prompt: str, secret: bool = False) -> str:
     return value.strip()
 
 
-def main() -> int:
+def claude_log_dirs(platform: str, environ, home: Path) -> list[Path]:
+    if platform == "darwin":
+        return [home / "Library" / "Logs" / "Claude"]
+    return [path.parent / "logs" for path in desktop_config_paths(platform, environ, home)]
+
+
+def _scrub(text: str, secrets: list[str]) -> str:
+    for secret in secrets:
+        text = text.replace(secret, "***")
+    return text
+
+
+def diagnose(platform: str, environ, home: Path, dest: Path) -> list[str]:
+    """Describe the install and Claude Desktop config; never shows key values."""
+    lines = [f"운영체제: {platform}", f"uv: {find_uv(environ) or '찾지 못함'}"]
+    dest = Path(dest)
+    if not dest.exists():
+        lines.append(f"설치 폴더 없음: {dest} (설치를 다시 실행해 주십시오)")
+    else:
+        venv = "있음" if (dest / ".venv").is_dir() else "없음 (uv sync가 끝나지 않았습니다)"
+        server = "있음" if (dest / "server.py").is_file() else "없음"
+        lines.append(f"설치 폴더: {dest} (server.py {server}, .venv {venv})")
+        if (dest / "configs").is_dir():
+            left = write_apis_left(dest / "configs")
+            lines.append("주문 API 없음 (조회 전용)" if not left else f"주문 API 남아 있음: {left}")
+
+    secrets: list[str] = []
+    for path in desktop_config_paths(platform, environ, home):
+        if not path.exists():
+            lines.append(f"설정 파일 없음: {path}")
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8") or "{}")
+        except ValueError as exc:
+            lines.append(f"JSON 형식 오류: {path} ({exc})")
+            continue
+        servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
+        entry = servers.get(SERVER_NAME)
+        if not entry:
+            lines.append(f"설정 파일에 kis-trading 없음: {path} (등록된 서버: {sorted(servers)})")
+            continue
+        env = entry.get("env", {})
+        secrets += [value for key, value in env.items() if key.startswith("KIS_") and value]
+        command = entry.get("command", "")
+        lines.append(f"kis-trading 등록됨: {path}")
+        lines.append(
+            f"    실행 파일 {'있음' if Path(command).is_file() else '없음: ' + command}, "
+            f"App Key {'입력됨' if env.get('KIS_APP_KEY') else '비어 있음'}"
+        )
+
+    for log_dir in claude_log_dirs(platform, environ, home):
+        found = False
+        for name in ("mcp-server-kis-trading.log", "mcp.log"):
+            log = log_dir / name
+            if not log.is_file():
+                continue
+            found = True
+            tail = log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if name == "mcp.log":
+                tail = [line for line in tail if "kis" in line.lower()]
+            lines.append(f"로그 {log} (마지막 {min(len(tail), 15)}줄):")
+            lines += ["    " + _scrub(line, secrets)[:300] for line in tail[-15:]]
+        if not found:
+            lines.append(f"kis-trading 로그 없음: {log_dir}")
+    return [_scrub(line, secrets) for line in lines]
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Read-only KIS Trading MCP for Claude Desktop")
+    parser.add_argument("--check", action="store_true", help="diagnose only, change nothing")
+    args = parser.parse_args(argv)
+    dest = Path.home() / "kis-trading-mcp"
+    if args.check:
+        print("\n".join(diagnose(sys.platform, os.environ, Path.home(), dest)))
+        print(
+            "\n설정을 바꾼 뒤에는 Claude 데스크톱을 트레이/메뉴 막대에서 '종료'로 완전히 끄고 다시 실행해야 합니다."
+        )
+        return 0
+
     print("한국투자증권 Trading MCP (조회 전용) 설치를 시작합니다.\n")
     uv = find_uv(os.environ)
     if not uv:
@@ -196,7 +276,6 @@ def main() -> int:
         print('  Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"')
         return 2
 
-    dest = Path.home() / "kis-trading-mcp"
     print(f"1/4 서버 내려받는 중 (커밋 {KIS_COMMIT[:7]}) ...")
     local_archive = os.environ.get("KIS_MCP_ARCHIVE")  # optional pre-downloaded zip
     if local_archive:

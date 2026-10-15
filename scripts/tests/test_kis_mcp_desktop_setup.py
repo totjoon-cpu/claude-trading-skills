@@ -136,3 +136,59 @@ def test_check_token_reports_failure(setup):
         "KEY123", "SECRET456", post=lambda url, payload: (403, {"error_code": "EGW00103"})
     )
     assert not ok and "EGW00103" in message
+
+
+# --- --check diagnostics ---------------------------------------------------
+
+
+def _mac_config(home: Path) -> Path:
+    return home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+
+
+def test_diagnose_reports_missing_config(setup, tmp_path):
+    report = "\n".join(setup.diagnose("darwin", {}, tmp_path, tmp_path / "kis-trading-mcp"))
+    assert "설정 파일 없음" in report
+    assert "설치 폴더 없음" in report
+
+
+def test_diagnose_reports_registered_server_without_secrets(setup, tmp_path):
+    dest = tmp_path / "kis-trading-mcp"
+    (dest / "configs").mkdir(parents=True)
+    (dest / "server.py").write_text("")
+    (dest / setup.MARKER).write_text("")
+    (dest / "configs" / "overseas_stock.json").write_text(json.dumps({"apis": {"price": {}}}))
+    uv = tmp_path / "uv"
+    uv.write_text("")
+    config = _mac_config(tmp_path)
+    config.parent.mkdir(parents=True)
+    entry = {
+        "command": str(uv),
+        "args": ["--directory", str(dest), "run", "python", "server.py"],
+        "env": {
+            "KIS_APP_KEY": "SECRETKEY1",
+            "KIS_APP_SECRET": "SECRETVAL2",
+            "KIS_ACCT_STOCK": "87654321",
+        },
+    }
+    config.write_text(json.dumps({"mcpServers": {"kis-trading": entry}}))
+    logs = tmp_path / "Library" / "Logs" / "Claude"
+    logs.mkdir(parents=True)
+    (logs / "mcp-server-kis-trading.log").write_text(
+        "starting with key SECRETKEY1 and account 87654321\nServer started\n"
+    )
+
+    report = "\n".join(setup.diagnose("darwin", {}, tmp_path, dest))
+
+    assert "kis-trading 등록됨" in report
+    assert "주문 API 없음" in report
+    assert "Server started" in report
+    for secret in ("SECRETKEY1", "SECRETVAL2", "87654321"):
+        assert secret not in report
+
+
+def test_diagnose_flags_invalid_json(setup, tmp_path):
+    config = _mac_config(tmp_path)
+    config.parent.mkdir(parents=True)
+    config.write_text("{ not json")
+    report = "\n".join(setup.diagnose("darwin", {}, tmp_path, tmp_path / "x"))
+    assert "JSON 형식 오류" in report
