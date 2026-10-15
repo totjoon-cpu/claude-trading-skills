@@ -6,10 +6,13 @@ endpoints and writes them as JSON. Only the allowlisted read-only TR IDs in
 READ_ONLY_TRS can be sent; there is no order code path. Credentials come from
 environment variables and never appear in the output.
 
-Environment variables:
+Environment variables (the KIS Trading MCP names in brackets also work):
     KIS_APP_KEY, KIS_APP_SECRET  App key and secret from KIS Developers
+                                 [KIS_API_KEY, KIS_API_SECRET]
     KIS_ACCOUNT_NO               Account number: "12345678-01", 10 digits, or 8 digits
+                                 [KIS_ACCT_STOCK]
     KIS_ACCOUNT_PRODUCT_CD       Product code for an 8-digit account number (default "01")
+                                 [KIS_PROD_TYPE]
     KIS_ENV                      "real" (default) or "mock"
 
 Usage:
@@ -55,7 +58,14 @@ READ_ONLY_TRS = {
 US_EXCHANGES = ("NASD", "NYSE", "AMEX")
 MAX_PAGES = 10
 RATE_LIMIT_CODE = "EGW00201"
-REQUIRED_ENV = ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO")
+# Setting -> accepted variable names, first one is the documented name.
+ENV_NAMES = {
+    "app_key": ("KIS_APP_KEY", "KIS_API_KEY"),
+    "app_secret": ("KIS_APP_SECRET", "KIS_API_SECRET"),
+    "account": ("KIS_ACCOUNT_NO", "KIS_ACCT_STOCK"),
+    "product": ("KIS_ACCOUNT_PRODUCT_CD", "KIS_PROD_TYPE"),
+}
+REQUIRED_SETTINGS = ("app_key", "app_secret", "account")
 
 
 class KisError(Exception):
@@ -290,6 +300,10 @@ def build_snapshot(holdings, cash, cano, prdt, env, now=None) -> dict:
     }
 
 
+def _read_setting(environ, key):
+    return next((environ[name] for name in ENV_NAMES[key] if environ.get(name)), "")
+
+
 def main(argv=None, environ=None, transport=None) -> int:
     environ = os.environ if environ is None else environ
     parser = argparse.ArgumentParser(description="Read-only KIS US stock account snapshot")
@@ -301,16 +315,15 @@ def main(argv=None, environ=None, transport=None) -> int:
     parser.add_argument("--env", choices=sorted(HOSTS), default=None, help="real (default) or mock")
     args = parser.parse_args(argv)
 
-    missing = [name for name in REQUIRED_ENV if not environ.get(name)]
+    settings = {key: _read_setting(environ, key) for key in ENV_NAMES}
+    missing = [ENV_NAMES[key][0] for key in REQUIRED_SETTINGS if not settings[key]]
     if missing:
         print(f"Missing environment variables: {', '.join(missing)}", file=sys.stderr)
         return 1
     try:
-        cano, prdt = parse_account(
-            environ["KIS_ACCOUNT_NO"], environ.get("KIS_ACCOUNT_PRODUCT_CD") or "01"
-        )
+        cano, prdt = parse_account(settings["account"], settings["product"] or "01")
         env = args.env or environ.get("KIS_ENV") or "real"
-        client = KisClient(environ["KIS_APP_KEY"], environ["KIS_APP_SECRET"], env, transport)
+        client = KisClient(settings["app_key"], settings["app_secret"], env, transport)
     except ValueError as exc:
         print(f"Invalid configuration: {exc}", file=sys.stderr)
         return 1

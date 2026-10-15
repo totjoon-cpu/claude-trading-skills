@@ -233,6 +233,24 @@ def _env(**extra):
     return env
 
 
+def test_main_accepts_kis_trading_mcp_variable_names(kis, tmp_path):
+    transport = FakeTransport(_account_route({}, []))
+    environ = {
+        "KIS_API_KEY": APP_KEY,
+        "KIS_API_SECRET": APP_SECRET,
+        "KIS_ACCT_STOCK": "12345678",
+        "KIS_PROD_TYPE": "22",
+    }
+
+    code = kis.main(["--output", str(tmp_path / "s.json")], environ=environ, transport=transport)
+
+    assert code == 0
+    token_call = transport.calls[0]
+    assert token_call["body"]["appkey"] == APP_KEY
+    balance_call = next(c for c in transport.calls if c["path"].endswith("/inquire-balance"))
+    assert balance_call["params"]["ACNT_PRDT_CD"] == "22"
+
+
 def test_main_reports_missing_variables(kis, capsys):
     code = kis.main(["--output", "-"], environ={}, transport=FakeTransport(lambda c: None))
     err = capsys.readouterr().err
