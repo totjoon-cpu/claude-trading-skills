@@ -44,9 +44,14 @@ class FinvizStockClient:
         self.last_request_time = 0.0
         self.cache = {}
         self.session = requests.Session()
-        # Use a realistic user agent to avoid blocking
+        # Use a complete browser user agent; Finviz returns 403 for a truncated one
         self.session.headers.update(
-            {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+                )
+            }
         )
 
     def _rate_limited_fetch(self, symbol: str) -> Optional[dict]:

@@ -102,3 +102,12 @@ def test_with_valid_fmp_holders_finviz_not_called():
         result = calculate_institutional_sponsorship(holders, profile, symbol="AAPL")
     assert finviz_called["hit"] is False, "Finviz path must not run when FMP data is present"
     assert result["ownership_pct"] == 65.0
+
+
+def test_finviz_client_sends_complete_user_agent():
+    """Finviz answers 403 to a truncated UA ending at 'AppleWebKit/537.36'."""
+    from finviz_stock_client import FinvizStockClient
+
+    user_agent = FinvizStockClient().session.headers["User-Agent"]
+    assert "(KHTML, like Gecko)" in user_agent
+    assert "Chrome/" in user_agent and "Safari/" in user_agent
